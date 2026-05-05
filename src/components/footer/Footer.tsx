@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Typography } from "@mui/material";
-import { Outlet } from "react-router-dom";
+import { Outlet, useNavigate } from "react-router-dom";
 import ionLogo from "assets/ion-logo.png";
 
 const resources = [
@@ -16,6 +16,7 @@ const community = [
 ];
 
 export const Footer = () => {
+  const navigate = useNavigate();
   return (
     <>
       <Box
@@ -48,7 +49,16 @@ export const Footer = () => {
               pb: { xs: 5, md: 6 },
             }}>
             <Box sx={{ minWidth: 0 }}>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1.4, mb: 2.5 }}>
+              <Box
+                onClick={() => navigate("/")}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1.4,
+                  mb: 2.5,
+                  cursor: "pointer",
+                  "&:hover": { opacity: 0.85 },
+                }}>
                 <Box sx={{ position: "relative", width: 44, height: 44, flexShrink: 0 }}>
                   <Box
                     sx={{
@@ -117,7 +127,7 @@ export const Footer = () => {
                       letterSpacing: "0.22em",
                       textTransform: "uppercase",
                     }}>
-                    Token Launchpad
+                    NFT Studio
                   </Typography>
                 </Box>
               </Box>
@@ -129,8 +139,8 @@ export const Footer = () => {
                   lineHeight: "24px",
                   maxWidth: 420,
                 }}>
-                The community-built token launch platform for Ice Open Network. Minimal,
-                transparent, and open-source — designed for builders.
+                The community-built NFT studio for Ice Open Network. Mint NFT collections with paid
+                mints or proof-of-burn drops that permanently destroy ION with every mint.
               </Typography>
             </Box>
 
@@ -195,7 +205,9 @@ export const Footer = () => {
               <SocialBubble href="https://x.com/ice_blockchain" ariaLabel="X (Twitter)">
                 <XIcon />
               </SocialBubble>
-              <SocialBubble href="https://github.com/professorblock/ion-nft-studio" ariaLabel="GitHub">
+              <SocialBubble
+                href="https://github.com/professorblock/ion-nft-studio"
+                ariaLabel="GitHub">
                 <GitHubIcon />
               </SocialBubble>
             </Box>

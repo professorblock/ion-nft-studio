@@ -7,7 +7,7 @@ import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownR
 import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
-import { Outlet } from "react-router-dom";
+import { Outlet, useNavigate } from "react-router-dom";
 import { HeaderContent, HeaderWrapper } from "./styled";
 import { TonConnectButton, useTonAddress, useTonConnectUI } from "@ion-gateway/ui-react";
 import ionLogo from "assets/ion-logo.png";
@@ -251,24 +251,28 @@ const WordMark = () => (
         textTransform: "uppercase",
         whiteSpace: "nowrap",
       }}>
-      Token Launchpad
+      NFT Studio
     </Box>
   </Box>
 );
 
-const LogoBlock = () => (
-  <Box
-    sx={{
-      display: "flex",
-      alignItems: "center",
-      gap: 1.4,
-      cursor: "pointer",
-      userSelect: "none",
-    }}>
-    <IonLogoMark />
-    <WordMark />
-  </Box>
-);
+const LogoBlock = () => {
+  const navigate = useNavigate();
+  return (
+    <Box
+      onClick={() => navigate("/")}
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 1.4,
+        cursor: "pointer",
+        userSelect: "none",
+      }}>
+      <IonLogoMark />
+      <WordMark />
+    </Box>
+  );
+};
 
 const NavItem = ({ label, href }: { label: string; href: string }) => (
   <Box

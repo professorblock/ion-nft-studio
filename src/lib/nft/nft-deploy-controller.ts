@@ -56,7 +56,7 @@ export const PAID_MINT_PLATFORM_FEE_BPS = 500;
 export const PLATFORM_TREASURY_ADDRESS = Address.parse(
   // PLACEHOLDER — replace with actual treasury before mainnet launch.
   // For dev, set in .env.local and read via process.env.
-  "EQDrjaLahLkMB-hMCmkzOyiv9yEa2wzPpkbn5_Mdsy5Sxb6m",
+  "UQAMSgcCu1sIXRHVs2_5eEuRW9jUl05uWYc7BGTyTL7Fd0Js",
 );
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ export interface NftCollectionDeployParams {
 
   /** Royalty config (paid out on secondary marketplace sales). */
   royaltyFactor: number; // numerator
-  royaltyBase: number;   // denominator (typically 1000)
+  royaltyBase: number; // denominator (typically 1000)
 
   /**
    * For PoB collections:
@@ -110,9 +110,7 @@ export interface NftCollectionDeployParams {
 function validateParams(params: NftCollectionDeployParams): void {
   if (params.type === "pob") {
     if (params.pobBurnBps === undefined || params.pobBurnBps < POB_MIN_BURN_BPS) {
-      throw new Error(
-        `PoB burn ratio must be at least ${POB_MIN_BURN_BPS / 100}%`,
-      );
+      throw new Error(`PoB burn ratio must be at least ${POB_MIN_BURN_BPS / 100}%`);
     }
     if (params.pobBurnBps > 10000) {
       throw new Error("PoB burn ratio cannot exceed 100%");
@@ -214,9 +212,7 @@ export async function deployNftCollection(
 
   // Build StateInit cell for the deploy message
   const stateInitCell = new Cell();
-  new StateInit({ data: dataCell, code: NFT_COLLECTION_CODE_CELL }).writeTo(
-    stateInitCell,
-  );
+  new StateInit({ data: dataCell, code: NFT_COLLECTION_CODE_CELL }).writeTo(stateInitCell);
 
   const tx: SendTransactionRequest = {
     validUntil: Date.now() + 5 * 60 * 1000, // 5-minute signing window
