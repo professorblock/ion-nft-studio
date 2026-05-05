@@ -1,0 +1,114 @@
+/* ================================================================
+   ION Hub — Global Styles
+   Pure black background with a subtle blue/purple radial glow
+   restricted to the top of the page (matches Arena reference).
+   ================================================================ */
+
+body {
+  margin: 0;
+  background-color: #000000;
+  color: #ffffff;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Subtle two-color radial glow at the top of the page only */
+  background-image: radial-gradient(
+      ellipse 80% 50% at 50% 0%,
+      rgba(99, 102, 241, 0.18) 0%,
+      transparent 60%
+    ),
+    radial-gradient(ellipse 60% 40% at 50% 0%, rgba(168, 85, 247, 0.12) 0%, transparent 70%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Hide scrollbars while keeping scroll functional */
+html,
+body {
+  scrollbar-width: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
+
+/* =====================================================
+   Utility classes used by the deployer page
+   ===================================================== */
+
+/* Faint grid pattern (used behind hero if desired) */
+.bg-grid {
+  background-size: 48px 48px;
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+}
+
+.mask-radial {
+  -webkit-mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
+  mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
+}
+
+/* Glass card surface — used by stat bar and form panels */
+.glass-card {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.015) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-radius: 24px;
+}
+
+/* Gradient text for hero accent */
+.gradient-text {
+  background: linear-gradient(135deg, #60a5fa 0%, #818cf8 50%, #a78bfa 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* =====================================================
+   Animations
+   ===================================================== */
+
+@keyframes pulse-slow {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scale(1.06);
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 8s ease-in-out infinite;
+}
+
+@keyframes status-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.status-dot {
+  animation: status-blink 2.4s ease-in-out infinite;
+}
