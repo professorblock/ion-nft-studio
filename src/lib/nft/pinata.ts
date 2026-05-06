@@ -1,47 +1,42 @@
 /**
  * pinata.ts
  * ─────────
- * Client-side IPFS uploads via Pinata's REST API.
+ * Client-side helpers for IPFS uploads. Two modes, picked at build time:
  *
- * Setup:
- *   1. Sign up at pinata.cloud (free tier, 1 GB)
- *   2. Generate a scoped API key with `pinFileToIPFS` + `pinJSONToIPFS`
- *      permissions (settings → API Keys → New Key → tick those two scopes)
- *   3. Copy the JWT (long string starting with "eyJ…")
- *   4. Add to your `.env.local` file in project root:
- *        REACT_APP_PINATA_JWT=eyJ...
- *      (.env.local is gitignored by CRA so the JWT never reaches GitHub)
+ *   1. PROXY MODE (preferred for production)
+ *        Set REACT_APP_UPLOAD_PROXY_URL in .env.local. The worker at that
+ *        URL holds the JWT server-side; nothing sensitive ships in the bundle.
+ *        Worker source: workers/upload-proxy/
  *
- * SECURITY NOTE:
- *   The JWT is bundled into the client-side JS at build time. Anyone
- *   inspecting network requests on the live site can extract it. For a
- *   solo/small project this is acceptable (worst case: someone uploads
- *   garbage to your Pinata bucket — rotate the key if abused). For
- *   production hardening, replace this with a server-side proxy
- *   (Cloudflare Worker etc.) that holds the JWT.
+ *   2. DIRECT MODE (legacy / solo dev)
+ *        Set REACT_APP_PINATA_JWT in .env.local. JWT is bundled into the
+ *        client JS — fine for solo testing, not safe for public production.
+ *
+ * If neither is set, the form gracefully degrades to URL-paste only.
  */
 
 const PINATA_BASE = "https://api.pinata.cloud";
-const PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs"; // public gateway for reads
+const PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs";
 
-export class PinataNotConfiguredError extends Error {
+const PROXY_URL = (process.env.REACT_APP_UPLOAD_PROXY_URL ?? "").replace(/\/+$/, "");
+const PINATA_JWT = process.env.REACT_APP_PINATA_JWT ?? "";
+
+const HAS_PROXY = Boolean(PROXY_URL);
+const HAS_JWT = Boolean(PINATA_JWT);
+
+export class UploadNotConfiguredError extends Error {
   constructor() {
     super(
-      "Pinata JWT not configured. Add REACT_APP_PINATA_JWT to .env.local — " +
-        "see src/lib/nft/pinata.ts for setup instructions.",
+      "Image uploads not configured. Set REACT_APP_UPLOAD_PROXY_URL " +
+        "(preferred) or REACT_APP_PINATA_JWT in .env.local. " +
+        "See workers/upload-proxy/README.md for the proxy setup.",
     );
-    this.name = "PinataNotConfiguredError";
+    this.name = "UploadNotConfiguredError";
   }
 }
 
-function getJwt(): string {
-  const jwt = process.env.REACT_APP_PINATA_JWT;
-  if (!jwt) throw new PinataNotConfiguredError();
-  return jwt;
-}
-
 export function isPinataConfigured(): boolean {
-  return Boolean(process.env.REACT_APP_PINATA_JWT);
+  return HAS_PROXY || HAS_JWT;
 }
 
 /**
@@ -55,20 +50,41 @@ export function ipfsToHttp(uri: string): string {
   return `${PINATA_GATEWAY}/${uri}`;
 }
 
-/**
- * Upload an arbitrary File or Blob to IPFS via Pinata.
- * Returns the ipfs:// URI on success.
- */
-export async function uploadFileToIPFS(file: File | Blob, filename = "upload"): Promise<string> {
-  const jwt = getJwt();
+// ──────────────────────────────────────────────────────────────────────────────
+// File upload
+// ──────────────────────────────────────────────────────────────────────────────
 
+export async function uploadFileToIPFS(file: File | Blob, filename = "upload"): Promise<string> {
+  if (HAS_PROXY) return uploadFileViaProxy(file, filename);
+  if (HAS_JWT) return uploadFileViaJwt(file, filename);
+  throw new UploadNotConfiguredError();
+}
+
+async function uploadFileViaProxy(file: File | Blob, filename: string): Promise<string> {
+  const form = new FormData();
+  form.append("file", file, filename);
+
+  const res = await fetch(`${PROXY_URL}/upload/file`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Upload proxy error (${res.status}): ${text.slice(0, 200)}`);
+  }
+  const json = (await res.json()) as { url: string };
+  return json.url;
+}
+
+async function uploadFileViaJwt(file: File | Blob, filename: string): Promise<string> {
   const form = new FormData();
   form.append("file", file, filename);
   form.append("pinataMetadata", JSON.stringify({ name: `ion-nft-studio:${filename}` }));
 
   const res = await fetch(`${PINATA_BASE}/pinning/pinFileToIPFS`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${jwt}` },
+    headers: { Authorization: `Bearer ${PINATA_JWT}` },
     body: form,
   });
 
@@ -76,27 +92,41 @@ export async function uploadFileToIPFS(file: File | Blob, filename = "upload"): 
     const text = await res.text();
     throw new Error(`Pinata file upload failed (${res.status}): ${text.slice(0, 200)}`);
   }
-
   const json = (await res.json()) as { IpfsHash: string };
-  // Return the public HTTPS gateway URL rather than `ipfs://CID` — ION's
-  // explorer and most TON-family marketplaces don't resolve the ipfs://
-  // scheme on their own. The content is still pinned to IPFS; we just give
-  // consumers a URL they can actually fetch.
   return `${PINATA_GATEWAY}/${json.IpfsHash}`;
 }
 
-/**
- * Upload a JSON object to IPFS via Pinata.
- * Returns the ipfs:// URI on success.
- */
-export async function uploadJsonToIPFS(obj: unknown, name = "metadata.json"): Promise<string> {
-  const jwt = getJwt();
+// ──────────────────────────────────────────────────────────────────────────────
+// JSON upload
+// ──────────────────────────────────────────────────────────────────────────────
 
+export async function uploadJsonToIPFS(obj: unknown, name = "metadata.json"): Promise<string> {
+  if (HAS_PROXY) return uploadJsonViaProxy(obj);
+  if (HAS_JWT) return uploadJsonViaJwt(obj, name);
+  throw new UploadNotConfiguredError();
+}
+
+async function uploadJsonViaProxy(obj: unknown): Promise<string> {
+  const res = await fetch(`${PROXY_URL}/upload/json`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(obj),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Upload proxy error (${res.status}): ${text.slice(0, 200)}`);
+  }
+  const json = (await res.json()) as { url: string };
+  return json.url;
+}
+
+async function uploadJsonViaJwt(obj: unknown, name: string): Promise<string> {
   const res = await fetch(`${PINATA_BASE}/pinning/pinJSONToIPFS`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${jwt}`,
+      Authorization: `Bearer ${PINATA_JWT}`,
     },
     body: JSON.stringify({
       pinataMetadata: { name: `ion-nft-studio:${name}` },
@@ -108,7 +138,6 @@ export async function uploadJsonToIPFS(obj: unknown, name = "metadata.json"): Pr
     const text = await res.text();
     throw new Error(`Pinata JSON upload failed (${res.status}): ${text.slice(0, 200)}`);
   }
-
   const json = (await res.json()) as { IpfsHash: string };
   return `${PINATA_GATEWAY}/${json.IpfsHash}`;
 }

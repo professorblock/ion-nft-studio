@@ -1,0 +1,16 @@
+name = "ion-nft-upload-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-09-01"
+
+# Public, non-secret config — comma-separated list of allowed CORS origins.
+# Add any future preview/staging subdomains here.
+[vars]
+ALLOWED_ORIGINS = "https://nft.ionhub.io,http://localhost:3000"
+
+# PINATA_JWT is set as a Cloudflare secret, NOT a var.
+# After first deploy, run:
+#   npx wrangler secret put PINATA_JWT
+# and paste your Pinata JWT when prompted.
+
+# Workers.dev subdomain is enabled by default. Worker URL after deploy:
+#   https://ion-nft-upload-proxy.<your-subdomain>.workers.dev
