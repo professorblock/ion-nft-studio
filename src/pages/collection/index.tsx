@@ -12,6 +12,7 @@ import { useCollection, CollectionState } from "./useCollection";
 import { CollectionData, CollectionMetadata } from "lib/nft/collection-reader";
 import { shortAddress } from "lib/nft/address-format";
 import { ROUTES } from "consts";
+import { PobMintFlow } from "./PobMintFlow";
 import { useState } from "react";
 
 const ION_EXPLORER_ADDR = (a: string) => `https://explorer.ice.io/address/${a}`;
@@ -211,7 +212,11 @@ const SuccessView = ({ data }: { data: CollectionData }) => {
     <Box sx={{ display: "flex", flexDirection: "column", gap: 5 }}>
       <Hero data={data} accent={accent} isPob={isPob} />
       <StatsGrid data={data} accent={accent} isPob={isPob} />
-      <MintSection data={data} accent={accent} isPob={isPob} />
+      {isPob ? (
+        <PobMintFlow data={data} accent={accent} />
+      ) : (
+        <MintSection data={data} accent={accent} isPob={isPob} />
+      )}
       <ItemsGallery nextItemIndex={data.nextItemIndex} />
     </Box>
   );
