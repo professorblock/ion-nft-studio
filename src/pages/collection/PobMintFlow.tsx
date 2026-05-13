@@ -341,7 +341,12 @@ const StatusPanel = ({
     { key: "logged", label: "Watcher detected burn" },
     { key: "minted", label: "NFT minted to your wallet" },
   ];
-  const stageOrder: Record<string, number> = { signing: 0, pending: 1, logged: 2, minted: 3 };
+  // Map each state to the index of the FIRST stage that hasn't completed yet.
+  //   signing  → 0 (signing is in progress)
+  //   pending  → 2 (signing + broadcast done; waiting for watcher to detect)
+  //   logged   → 3 (signing + broadcast + watcher done; waiting for mint)
+  //   minted   → 4 (all done; no in-progress stage)
+  const stageOrder: Record<string, number> = { signing: 0, pending: 2, logged: 3, minted: 4 };
   const currentIdx = stageOrder[stage.kind] ?? -1;
 
   return (
