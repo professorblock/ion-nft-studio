@@ -6,11 +6,13 @@ compatibility_date = "2024-09-01"
 # Add any future preview/staging subdomains here.
 [vars]
 ALLOWED_ORIGINS = "https://nft.ionhub.io,http://localhost:3000"
+GITHUB_REPO = "professorblock/ion-nft-watcher"
+PLATFORM_MINT_KEY_ADDRESS = "UQC_HMOBZjPfGjhIFG0Gwjp3oSd9tdUe-nFfXQ8GMZhXHiWQ"
 
-# PINATA_JWT is set as a Cloudflare secret, NOT a var.
-# After first deploy, run:
-#   npx wrangler secret put PINATA_JWT
-# and paste your Pinata JWT when prompted.
+# PINATA_JWT (existing) and GITHUB_PAT (new) are set as Cloudflare secrets.
+# After deploy, run:
+#   npx wrangler secret put PINATA_JWT     (already done previously)
+#   npx wrangler secret put GITHUB_PAT     (NEW — paste your fine-grained PAT)
 
 # Workers.dev subdomain is enabled by default. Worker URL after deploy:
 #   https://ion-nft-upload-proxy.<your-subdomain>.workers.dev

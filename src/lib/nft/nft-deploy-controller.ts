@@ -49,15 +49,40 @@ export const POB_MIN_BURN_PER_MINT = toNano(1000);
 export const PAID_MINT_PLATFORM_FEE_BPS = 500;
 
 /**
- * Treasury that receives platform fees. **Override per environment.**
- * During development you can point this at your own wallet so test deploy
- * fees bounce back; in production, set to the actual platform treasury.
+ * Treasury that receives platform fees. Read from env at build time.
+ * Set REACT_APP_PLATFORM_TREASURY_ADDRESS in .env.local.
+ *
+ * For dev/testing you can point this at your own wallet so test deploy fees
+ * bounce back; for production this is a separate cold treasury wallet.
+ *
+ * Falls back to the placeholder below if the env var is missing — use this
+ * only to get the build green; never deploy a real PoB collection without
+ * a real treasury value.
  */
+const TREASURY_FROM_ENV = process.env.REACT_APP_PLATFORM_TREASURY_ADDRESS;
+const TREASURY_PLACEHOLDER = "EQDrjaLahLkMB-hMCmkzOyiv9yEa2wzPpkbn5_Mdsy5Sxb6m";
 export const PLATFORM_TREASURY_ADDRESS = Address.parse(
-  // PLACEHOLDER — replace with actual treasury before mainnet launch.
-  // For dev, set in .env.local and read via process.env.
-  "UQAMSgcCu1sIXRHVs2_5eEuRW9jUl05uWYc7BGTyTL7Fd0Js",
+  TREASURY_FROM_ENV && TREASURY_FROM_ENV.length > 10 ? TREASURY_FROM_ENV : TREASURY_PLACEHOLDER,
 );
+
+/**
+ * Platform mint key wallet — owns every PoB collection on-chain so the
+ * watcher can authorize mints. Read from env at build time.
+ * Set REACT_APP_PLATFORM_MINT_KEY_ADDRESS in .env.local.
+ *
+ * If unset (e.g. dev mode), getPlatformMintKey() returns null and the
+ * caller falls back to the creator's own wallet (legacy test path).
+ */
+const MINT_KEY_FROM_ENV = process.env.REACT_APP_PLATFORM_MINT_KEY_ADDRESS;
+export function getPlatformMintKey(): Address | null {
+  if (!MINT_KEY_FROM_ENV || MINT_KEY_FROM_ENV.length < 10) return null;
+  try {
+    return Address.parse(MINT_KEY_FROM_ENV);
+  } catch {
+    return null;
+  }
+}
+export const PLATFORM_MINT_KEY_ADDRESS = getPlatformMintKey();
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types

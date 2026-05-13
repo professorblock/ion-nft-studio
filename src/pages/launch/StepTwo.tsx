@@ -19,8 +19,11 @@ import {
   CollectionType,
   deployNftCollection,
   predictCollectionAddress,
+  PLATFORM_MINT_KEY_ADDRESS,
 } from "lib/nft/nft-deploy-controller";
 import { uploadFileToIPFS, uploadJsonToIPFS, ipfsToHttp, isPinataConfigured } from "lib/nft/pinata";
+import { deriveBurnPocket } from "lib/nft/burn-pocket";
+import { registerPobCollectionWithWatcher, RegisterResult } from "lib/nft/watcher-registration";
 import {
   FormShell,
   FormCard,
@@ -63,7 +66,8 @@ type DeployStage =
   | { kind: "uploading-metadata" }
   | { kind: "awaiting-signature" }
   | { kind: "broadcasting" }
-  | { kind: "success"; address: string }
+  | { kind: "registering" }
+  | { kind: "success"; address: string; registration: RegisterResult | null }
   | { kind: "error"; message: string };
 
 const ION_EXPLORER_ADDR = (a: string) => `https://explorer.ice.io/address/${a}`;
@@ -209,6 +213,11 @@ export const StepTwo = ({ type, onBack }: Props) => {
       // For v1 these are all generated server-side at mint time, so we just
       // point at our domain with the collection address as a marker.
       const creator = Address.parse(walletAddress);
+      // PoB collections must be owned by the platform mint key so the watcher
+      // can authorize mints. Paid collections stay creator-owned.
+      // If the env var isn't set yet, fall back to creator (legacy dev path).
+      const ownerForDeploy =
+        type === "pob" && PLATFORM_MINT_KEY_ADDRESS ? PLATFORM_MINT_KEY_ADDRESS : creator;
       const placeholderAddr = predictCollectionAddress({
         creatorAddress: creator,
         type,
@@ -216,7 +225,7 @@ export const StepTwo = ({ type, onBack }: Props) => {
         commonContentUri: "https://nft.ionhub.io/items/",
         royaltyFactor: Math.round(form.royaltyPct * 10),
         royaltyBase: 1000,
-        platformMintKeyAddress: creator,
+        platformMintKeyAddress: ownerForDeploy,
         ...(type === "paid"
           ? { paidMintPrice: toNano(form.mintPriceIon) }
           : {
@@ -236,7 +245,7 @@ export const StepTwo = ({ type, onBack }: Props) => {
           commonContentUri,
           royaltyFactor: Math.round(form.royaltyPct * 10),
           royaltyBase: 1000,
-          platformMintKeyAddress: creator, // dev: creator's own wallet
+          platformMintKeyAddress: ownerForDeploy,
           ...(type === "paid"
             ? { paidMintPrice: toNano(form.mintPriceIon) }
             : {
@@ -248,11 +257,30 @@ export const StepTwo = ({ type, onBack }: Props) => {
       );
 
       setStage({ kind: "broadcasting" });
-      // Tx is sent; on-chain confirmation typically lands in 5–15 seconds.
-      // We don't poll here — the user can click through to the explorer.
-      setTimeout(() => {
-        setStage({ kind: "success", address: result.collectionAddress.toString() });
-      }, 1200);
+      // Wait briefly for ION to confirm the deploy before attempting registration.
+      // Without this delay the watcher's on-chain check would race the deploy tx.
+      await new Promise((r) => setTimeout(r, 8_000));
+
+      // 5. Register with the watcher (PoB only — paid collections don't need it)
+      let registration: RegisterResult | null = null;
+      if (type === "pob") {
+        setStage({ kind: "registering" });
+        const burnPocket = deriveBurnPocket(result.collectionAddress);
+        registration = await registerPobCollectionWithWatcher({
+          collection_address: result.collectionAddress.toString(),
+          burn_pocket_address: burnPocket.toString(),
+          creator_address: creator.toString(),
+          pob_burn_pct: form.pobBurnPct,
+          pob_mint_amount_nano: toNano(form.pobMintAmountIon).toString(),
+          max_supply: form.maxSupply.trim() ? Number(form.maxSupply) : null,
+        });
+      }
+
+      setStage({
+        kind: "success",
+        address: result.collectionAddress.toString(),
+        registration,
+      });
     } catch (err: any) {
       setStage({
         kind: "error",
@@ -268,6 +296,7 @@ export const StepTwo = ({ type, onBack }: Props) => {
     "uploading-metadata",
     "awaiting-signature",
     "broadcasting",
+    "registering",
   ].includes(stage.kind);
 
   const accent = type === "paid" ? "#60A5FA" : "#F87171";
@@ -346,6 +375,85 @@ export const StepTwo = ({ type, onBack }: Props) => {
               </Button>
             </Box>
           </FormCard>
+
+          {stage.registration && (
+            <FormCard sx={{ width: "100%" }}>
+              {stage.registration.ok ? (
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <Typography
+                    sx={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      letterSpacing: "0.16em",
+                      textTransform: "uppercase",
+                      color: "#34D399",
+                    }}>
+                    {stage.registration.alreadyRegistered
+                      ? "✓ Already registered"
+                      : "✓ Registered with watcher"}
+                  </Typography>
+                  <Typography
+                    sx={{ fontSize: 13.5, color: "rgba(255,255,255,0.7)", lineHeight: 1.6 }}>
+                    The watcher will start polling this collection's burn pocket on its next
+                    5-minute tick. When users burn ION to mint, the NFT will be authorized
+                    automatically.
+                  </Typography>
+                  {stage.registration.commitUrl && (
+                    <Box
+                      component="a"
+                      href={stage.registration.commitUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{
+                        fontSize: 12,
+                        color: "#A78BFA",
+                        textDecoration: "none",
+                        "&:hover": { textDecoration: "underline" },
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 0.5,
+                        mt: 0.5,
+                      }}>
+                      View registration commit
+                      <OpenInNewRoundedIcon sx={{ fontSize: 13 }} />
+                    </Box>
+                  )}
+                </Box>
+              ) : (
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <Typography
+                    sx={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      letterSpacing: "0.16em",
+                      textTransform: "uppercase",
+                      color: "#FBBF24",
+                    }}>
+                    ⚠ Watcher registration failed
+                  </Typography>
+                  <Typography
+                    sx={{ fontSize: 13.5, color: "rgba(255,255,255,0.7)", lineHeight: 1.6 }}>
+                    Your collection deployed successfully, but couldn't auto-register with the
+                    watcher. Mints won't process until registration succeeds. The contract is fine —
+                    only the watcher's tracking list needs updating.
+                  </Typography>
+                  <Box
+                    sx={{
+                      fontSize: 11,
+                      fontFamily: "monospace",
+                      color: "#FCD34D",
+                      background: "rgba(251,191,36,0.06)",
+                      border: "1px solid rgba(251,191,36,0.2)",
+                      borderRadius: "8px",
+                      padding: "8px 10px",
+                      wordBreak: "break-word",
+                    }}>
+                    {stage.registration.reason}
+                  </Box>
+                </Box>
+              )}
+            </FormCard>
+          )}
         </Box>
       </FormShell>
     );
@@ -749,6 +857,7 @@ export const StepTwo = ({ type, onBack }: Props) => {
                   "Confirm the deploy transaction in your wallet…"}
                 {stage.kind === "broadcasting" &&
                   "Transaction sent — waiting for confirmation on ION…"}
+                {stage.kind === "registering" && "Registering your collection with the watcher…"}
               </Box>
             </Box>
           )}
