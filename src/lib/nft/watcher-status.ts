@@ -19,6 +19,9 @@
 const RAW_STATE_URL =
   "https://raw.githubusercontent.com/professorblock/ion-nft-watcher/master/state/processed-burns.json";
 
+const RAW_TRACKED_URL =
+  "https://raw.githubusercontent.com/professorblock/ion-nft-watcher/master/state/tracked-collections.json";
+
 export type WatcherBurnStatus =
   | { status: "pending" }
   | { status: "logged"; detectedAt: string }
@@ -114,4 +117,52 @@ function addressesMatch(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   // Compare the middle portion (skip first char which is flag, last 4 which are CRC)
   return a.slice(1, -4) === b.slice(1, -4);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Tracked collections — look up the registered creator address
+// ──────────────────────────────────────────────────────────────────────────────
+
+interface TrackedCollection {
+  collection_address: string;
+  burn_pocket_address: string;
+  creator_address: string;
+  pob_burn_pct: number;
+  pob_mint_amount_nano: string;
+  max_supply: number | null;
+  registered_at: string;
+}
+
+export interface RegisteredCollectionInfo {
+  creator_address: string;
+  burn_pocket_address: string;
+  pob_burn_pct: number;
+}
+
+/**
+ * Look up a PoB collection's registered info (creator + pocket) from the
+ * watcher's tracked-collections.json. Returns null if not registered yet.
+ *
+ * The on-chain owner of a PoB collection is the PLATFORM MINT KEY (so the
+ * watcher can authorize mints) — the actual creator wallet is only known
+ * to the watcher via the registration entry. The burn-to-mint flow must
+ * use the registered creator_address to direct the creator share correctly.
+ */
+export async function fetchRegisteredCollection(
+  collectionAddress: string,
+): Promise<RegisteredCollectionInfo | null> {
+  try {
+    const res = await fetch(`${RAW_TRACKED_URL}?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const arr = (await res.json()) as TrackedCollection[];
+    const entry = arr.find((c) => addressesMatch(c.collection_address, collectionAddress));
+    if (!entry) return null;
+    return {
+      creator_address: entry.creator_address,
+      burn_pocket_address: entry.burn_pocket_address,
+      pob_burn_pct: entry.pob_burn_pct,
+    };
+  } catch {
+    return null;
+  }
 }

@@ -1,33 +1,39 @@
 /**
  * PobMintFlow.tsx
  * ───────────────
- * Burn-to-mint user flow for PoB collections. Replaces the disabled
- * placeholder MintSection from Batch 1.
+ * Burn-to-mint flow for PoB collections. Replaces the disabled placeholder
+ * MintSection from Batch 1.
  *
- * Stages:
- *   idle      → "Burn N ION to Mint" button
- *   signing   → wallet popup open
- *   pending   → tx broadcast, polling watcher for first detection
- *   logged    → watcher saw the burn, waiting for mint authorization
- *   minted    → NFT confirmed in burner's wallet
- *   rejected  → watcher refused the burn (split mismatch etc.)
- *   error     → wallet declined or other failure
+ * Fixes since fix8:
+ *   - Burn message now carries a text-comment payload. Some wallets ignore
+ *     the address's non-bounceable flag and bounce funds from uninitialized
+ *     accounts back to sender. Attaching a body cell makes the wallet route
+ *     the message as a "transfer with intent" — preventing the auto-bounce.
+ *   - Creator address is now fetched from the watcher's tracked-collections.json,
+ *     NOT from data.ownerAddress. For PoB collections, the on-chain owner is
+ *     the platform mint key; the actual creator wallet lives only in the
+ *     watcher's registration entry.
  */
 
 import { useEffect, useState } from "react";
-import { Box, Button, Typography, CircularProgress, LinearProgress } from "@mui/material";
+import { Box, Button, Typography, CircularProgress } from "@mui/material";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import LocalFireDepartmentRoundedIcon from "@mui/icons-material/LocalFireDepartmentRounded";
-import { Address, toNano } from "ton";
+import { Address, beginCell, toNano } from "ton";
 import { useTonAddress, useTonConnectUI } from "@ion-gateway/ui-react";
 
 import { CollectionData } from "lib/nft/collection-reader";
 import { deriveBurnPocket } from "lib/nft/burn-pocket";
 import { PLATFORM_TREASURY_ADDRESS } from "lib/nft/nft-deploy-controller";
-import { fetchBurnStatus } from "lib/nft/watcher-status";
+import {
+  fetchBurnStatus,
+  fetchRegisteredCollection,
+  RegisteredCollectionInfo,
+} from "lib/nft/watcher-status";
+import { shortAddress } from "lib/nft/address-format";
 
 const POLL_INTERVAL_MS = 30_000;
-const POLL_TIMEOUT_MS = 10 * 60_000; // 10 min total
+const POLL_TIMEOUT_MS = 10 * 60_000;
 
 type FlowStage =
   | { kind: "idle" }
@@ -49,10 +55,24 @@ export const PobMintFlow = ({ data, accent }: Props) => {
   const [tonConnectUI] = useTonConnectUI();
   const [stage, setStage] = useState<FlowStage>({ kind: "idle" });
 
+  // ── Registered-collection lookup (creator address) ────────────────
+  const [registered, setRegistered] = useState<
+    RegisteredCollectionInfo | null | "loading" | "not-registered"
+  >("loading");
+  useEffect(() => {
+    let cancelled = false;
+    fetchRegisteredCollection(data.address).then((info) => {
+      if (cancelled) return;
+      setRegistered(info ?? "not-registered");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [data.address]);
+
   const ih = data.metadata.ion_hub;
   const mintAmountIon = ih?.pob_mint_amount_ion ?? 0;
   const burnPct = ih?.pob_burn_pct ?? 0;
-  // 2% platform fee, rest to creator
   const platformPct = 2;
   const creatorPct = Math.max(0, 100 - burnPct - platformPct);
 
@@ -60,13 +80,13 @@ export const PobMintFlow = ({ data, accent }: Props) => {
   const platformNano = toNano(((mintAmountIon * platformPct) / 100).toFixed(9));
   const creatorNano = toNano(((mintAmountIon * creatorPct) / 100).toFixed(9));
 
-  // Polling effect: kicks in once we've broadcast and are waiting for mint
+  // ── Polling for mint status ────────────────────────────────────────
   useEffect(() => {
     if (stage.kind !== "pending" && stage.kind !== "logged") return;
     if (!walletAddress) return;
 
     const burnPocket = deriveBurnPocket(data.address);
-    const pocketStr = burnPocket.toFriendly({ urlSafe: true, bounceable: true, testOnly: false });
+    const pocketStr = burnPocket.toFriendly({ urlSafe: true, bounceable: false, testOnly: false });
 
     let cancelled = false;
     const startedAt = Date.now();
@@ -74,7 +94,6 @@ export const PobMintFlow = ({ data, accent }: Props) => {
     const tick = async () => {
       if (cancelled) return;
       const result = await fetchBurnStatus(walletAddress, pocketStr);
-
       if (cancelled) return;
 
       switch (result.status) {
@@ -95,7 +114,6 @@ export const PobMintFlow = ({ data, accent }: Props) => {
       }
     };
 
-    // Tick now, then every POLL_INTERVAL_MS
     tick();
     const id = window.setInterval(tick, POLL_INTERVAL_MS);
     return () => {
@@ -104,6 +122,7 @@ export const PobMintFlow = ({ data, accent }: Props) => {
     };
   }, [stage.kind, walletAddress, data.address]);
 
+  // ── Burn click handler ─────────────────────────────────────────────
   const onBurnClick = async () => {
     if (!walletAddress) {
       tonConnectUI?.openModal();
@@ -116,23 +135,40 @@ export const PobMintFlow = ({ data, accent }: Props) => {
       });
       return;
     }
-    if (
-      !data.metadata.ion_hub?.collection_type ||
-      data.metadata.ion_hub.collection_type !== "pob"
-    ) {
-      setStage({ kind: "error", message: "Not a proof-of-burn collection." });
+    if (registered === "loading") {
+      setStage({
+        kind: "error",
+        message: "Loading collection registration… try again in a moment.",
+      });
+      return;
+    }
+    if (registered === "not-registered" || !registered) {
+      setStage({
+        kind: "error",
+        message:
+          "This collection isn't registered with the watcher yet. The watcher's registration file may not have indexed it (auto-registration happens at deploy time). Without registration the mint can't be authorized — try again in a few minutes, or contact the creator.",
+      });
       return;
     }
 
-    // Build the 3-message transaction
     const burnPocket = deriveBurnPocket(data.address);
     let creatorAddr: Address;
     try {
-      creatorAddr = Address.parse(data.ownerAddress);
+      creatorAddr = Address.parse(registered.creator_address);
     } catch {
-      setStage({ kind: "error", message: "Could not parse the collection's owner address." });
+      setStage({ kind: "error", message: "Could not parse the registered creator address." });
       return;
     }
+
+    // Comment payload — short text body on the burn message. Wallets that
+    // would otherwise auto-bounce a transfer to an uninitialized account
+    // generally do not bounce a message that carries a comment body, since
+    // it indicates explicit intent.
+    const burnComment = beginCell()
+      .storeUint(0, 32) // op = 0 (text comment)
+      .storeBuffer(Buffer.from(`ION Hub burn ${data.address.slice(0, 8)}`, "utf-8"))
+      .endCell();
+    const burnPayloadB64 = burnComment.toBoc({ idx: false }).toString("base64");
 
     setStage({ kind: "signing" });
 
@@ -141,8 +177,9 @@ export const PobMintFlow = ({ data, accent }: Props) => {
         validUntil: Date.now() + 5 * 60_000,
         messages: [
           {
-            address: burnPocket.toFriendly({ urlSafe: true, bounceable: true, testOnly: false }),
+            address: burnPocket.toFriendly({ urlSafe: true, bounceable: false, testOnly: false }),
             amount: burnNano.toString(),
+            payload: burnPayloadB64,
           },
           {
             address: creatorAddr.toFriendly({ urlSafe: true, bounceable: false, testOnly: false }),
@@ -169,9 +206,9 @@ export const PobMintFlow = ({ data, accent }: Props) => {
     }
   };
 
-  // ──────── RENDER ────────
-
   const isWorking = ["signing", "pending", "logged"].includes(stage.kind);
+  const isLoadingRegistration = registered === "loading";
+  const buttonDisabled = isWorking || stage.kind === "minted" || isLoadingRegistration;
 
   return (
     <Box
@@ -181,7 +218,6 @@ export const PobMintFlow = ({ data, accent }: Props) => {
         background: `linear-gradient(135deg, ${accent}10 0%, rgba(0,0,0,0) 70%)`,
         border: `1px solid ${accent}30`,
       }}>
-      {/* HEADER */}
       <Box
         sx={{
           display: "flex",
@@ -215,15 +251,25 @@ export const PobMintFlow = ({ data, accent }: Props) => {
             <strong style={{ color: "#A78BFA" }}>{creatorPct}%</strong> to creator ·{" "}
             <strong style={{ color: "rgba(255,255,255,0.85)" }}>{platformPct}%</strong> platform
           </Typography>
+          {registered && registered !== "loading" && registered !== "not-registered" && (
+            <Typography sx={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)", mt: 0.5 }}>
+              Creator:{" "}
+              <span style={{ fontFamily: "monospace", color: "rgba(255,255,255,0.65)" }}>
+                {shortAddress(registered.creator_address)}
+              </span>
+            </Typography>
+          )}
         </Box>
 
         <Button
           onClick={onBurnClick}
-          disabled={isWorking || stage.kind === "minted"}
+          disabled={buttonDisabled}
           variant="contained"
           size="large"
           startIcon={
-            !isWorking && stage.kind !== "minted" ? <LocalFireDepartmentRoundedIcon /> : null
+            !isWorking && stage.kind !== "minted" && !isLoadingRegistration ? (
+              <LocalFireDepartmentRoundedIcon />
+            ) : null
           }
           sx={{
             alignSelf: { xs: "stretch", md: "auto" },
@@ -241,8 +287,12 @@ export const PobMintFlow = ({ data, accent }: Props) => {
               color: "rgba(255,255,255,0.4)",
             },
           }}>
-          {!walletAddress
+          {isLoadingRegistration
+            ? "Loading…"
+            : !walletAddress
             ? "Connect Wallet"
+            : registered === "not-registered"
+            ? "Not registered"
             : stage.kind === "signing"
             ? "Confirm in wallet…"
             : isWorking
@@ -253,8 +303,7 @@ export const PobMintFlow = ({ data, accent }: Props) => {
         </Button>
       </Box>
 
-      {/* STATUS PANEL */}
-      <StatusPanel stage={stage} accent={accent} data={data} />
+      <StatusPanel stage={stage} accent={accent} registered={registered} />
     </Box>
   );
 };
@@ -264,13 +313,27 @@ export const PobMintFlow = ({ data, accent }: Props) => {
 const StatusPanel = ({
   stage,
   accent,
-  data,
+  registered,
 }: {
   stage: FlowStage;
   accent: string;
-  data: CollectionData;
+  registered: RegisteredCollectionInfo | null | "loading" | "not-registered";
 }) => {
-  if (stage.kind === "idle") return null;
+  if (stage.kind === "idle") {
+    if (registered === "not-registered") {
+      return (
+        <Box sx={{ mt: 3, pt: 2.5, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+          <ErrorBlock
+            title="Collection not yet registered with the watcher"
+            message="This collection's burn-to-mint flow is not yet active."
+            tone="warn"
+            hint="Auto-registration usually happens within seconds of deploy. If this is a fresh deploy, refresh in 30 seconds. If the collection has been deployed for a while, the registration may have failed — contact the creator."
+          />
+        </Box>
+      );
+    }
+    return null;
+  }
 
   const stages: { key: string; label: string }[] = [
     { key: "signing", label: "Signing transaction" },
@@ -278,13 +341,7 @@ const StatusPanel = ({
     { key: "logged", label: "Watcher detected burn" },
     { key: "minted", label: "NFT minted to your wallet" },
   ];
-
-  const stageOrder: Record<string, number> = {
-    signing: 0,
-    pending: 1,
-    logged: 2,
-    minted: 3,
-  };
+  const stageOrder: Record<string, number> = { signing: 0, pending: 1, logged: 2, minted: 3 };
   const currentIdx = stageOrder[stage.kind] ?? -1;
 
   return (
@@ -294,7 +351,7 @@ const StatusPanel = ({
           title="Watcher rejected this burn"
           message={stage.reason}
           tone="error"
-          hint="The burn was detected but didn't match the expected split (burn / creator / treasury legs). If you used the official mint button on this page, this shouldn't happen — paste this message in support."
+          hint="The burn was detected but didn't match the expected split. If you used the official mint button on this page, this shouldn't happen — please report it."
         />
       )}
       {stage.kind === "timeout" && (
@@ -302,9 +359,7 @@ const StatusPanel = ({
           title="Watcher hasn't authorized this mint yet"
           message="No mint confirmation after 10 minutes."
           tone="warn"
-          hint={
-            "Two possible reasons: (1) the watcher is in log-only mode (live signing not enabled yet — that's true while we're still in v1 testing); (2) the watcher missed the burn. Your ION was still sent — check the explorer."
-          }
+          hint="Two possible reasons: (1) the watcher is currently in log-only mode (live signing not enabled yet during testing); (2) the watcher missed the burn. Your ION was still sent — check the explorer."
         />
       )}
       {stage.kind === "error" && (
