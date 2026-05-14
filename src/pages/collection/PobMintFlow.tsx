@@ -400,7 +400,12 @@ export const PobMintFlow = ({ data, accent }: Props) => {
         </Button>
       </Box>
 
-      <StatusPanel stage={stage} accent={accent} registered={registered} />
+      <StatusPanel
+        stage={stage}
+        accent={accent}
+        registered={registered}
+        collectionAddress={data.address}
+      />
     </Box>
   );
 };
@@ -411,10 +416,12 @@ const StatusPanel = ({
   stage,
   accent,
   registered,
+  collectionAddress,
 }: {
   stage: FlowStage;
   accent: string;
   registered: RegisteredCollectionInfo | null | "loading" | "not-registered";
+  collectionAddress: string;
 }) => {
   if (stage.kind === "idle") {
     if (registered === "not-registered") {
@@ -515,11 +522,11 @@ const StatusPanel = ({
               regardless.
             </Box>
           )}
-          {stage.kind === "minted" && stage.mintTxHash && (
-            <Box sx={{ mt: 2 }}>
+          {stage.kind === "minted" && (
+            <Box sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 0.75 }}>
               <Box
                 component="a"
-                href={`https://explorer.ice.io/transaction/${stage.mintTxHash}`}
+                href={`https://explorer.ice.io/address/${collectionAddress}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 sx={{
@@ -530,10 +537,17 @@ const StatusPanel = ({
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 0.5,
+                  alignSelf: "flex-start",
                 }}>
-                View mint transaction
+                View collection on explorer
                 <OpenInNewRoundedIcon sx={{ fontSize: 14 }} />
               </Box>
+              <Typography
+                sx={{ fontSize: 11.5, color: "rgba(255,255,255,0.45)", lineHeight: 1.55, mt: 0.5 }}>
+                Your NFT should appear in your wallet's Collectibles section within 1–5 minutes. If
+                it doesn't show up automatically, your wallet's NFT indexer may be slow — try
+                refreshing or manually adding the collection address.
+              </Typography>
             </Box>
           )}
         </Box>
