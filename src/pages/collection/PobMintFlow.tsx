@@ -221,8 +221,15 @@ export const PobMintFlow = ({ data, accent }: Props) => {
       if (cancelled) return;
 
       if (result.status === "logged") {
-        // Burn detected by watcher, awaiting mint. Resume polling.
-        setStage({ kind: "logged", detectedAt: result.detectedAt });
+        // Burn detected by watcher, awaiting mint. Resume polling — but only
+        // if the detection is recent. In live mode, "logged" should advance
+        // to "minted" within ~10 min, so an old "logged" entry is either
+        // stale (from a prior log-mode run) or stuck (watcher down). Either
+        // way, don't block the user from burning fresh.
+        const elapsedMs = Date.now() - new Date(result.detectedAt).getTime();
+        if (elapsedMs < 15 * 60 * 1000) {
+          setStage({ kind: "logged", detectedAt: result.detectedAt });
+        }
       } else if (result.status === "minted" && result.mintTxHash) {
         // Already minted — only show success state if recent (< 30 min)
         const elapsedMs = Date.now() - new Date(result.detectedAt).getTime();
