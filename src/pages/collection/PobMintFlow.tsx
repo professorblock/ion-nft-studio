@@ -206,9 +206,61 @@ export const PobMintFlow = ({ data, accent }: Props) => {
     }
   };
 
+  // ── State recovery on mount: if the connected wallet has a recent burn at
+  //    this pocket, auto-resume the progress tracker instead of showing a
+  //    fresh burn button. Avoids the "user refreshes, loses progress UI" pit.
+  useEffect(() => {
+    if (!walletAddress) return;
+    if (stage.kind !== "idle") return;
+
+    const burnPocket = deriveBurnPocket(data.address);
+    const pocketStr = burnPocket.toFriendly({ urlSafe: true, bounceable: false, testOnly: false });
+
+    let cancelled = false;
+    fetchBurnStatus(walletAddress, pocketStr).then((result) => {
+      if (cancelled) return;
+
+      if (result.status === "logged") {
+        // Burn detected by watcher, awaiting mint. Resume polling.
+        setStage({ kind: "logged", detectedAt: result.detectedAt });
+      } else if (result.status === "minted" && result.mintTxHash) {
+        // Already minted — only show success state if recent (< 30 min)
+        const elapsedMs = Date.now() - new Date(result.detectedAt).getTime();
+        if (elapsedMs < 30 * 60 * 1000) {
+          setStage({ kind: "minted", mintTxHash: result.mintTxHash });
+        }
+      }
+      // pending/rejected/no-match: stay idle (user can burn fresh)
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [walletAddress, data.address, stage.kind]);
+
   const isWorking = ["signing", "pending", "logged"].includes(stage.kind);
   const isLoadingRegistration = registered === "loading";
   const buttonDisabled = isWorking || stage.kind === "minted" || isLoadingRegistration;
+
+  // Friendly address forms (convert raw "0:hex" → UQ form if needed)
+  const creatorFriendly =
+    registered && registered !== "loading" && registered !== "not-registered"
+      ? toFriendlyForm(registered.creator_address)
+      : null;
+  const treasuryFriendly = toFriendlyForm(
+    PLATFORM_TREASURY_ADDRESS.toFriendly({
+      urlSafe: true,
+      bounceable: false,
+      testOnly: false,
+    }),
+  );
+  const burnPocketFriendly = toFriendlyForm(
+    deriveBurnPocket(data.address).toFriendly({
+      urlSafe: true,
+      bounceable: false,
+      testOnly: false,
+    }),
+  );
 
   return (
     <Box
@@ -222,43 +274,81 @@ export const PobMintFlow = ({ data, accent }: Props) => {
         sx={{
           display: "flex",
           flexDirection: { xs: "column", md: "row" },
-          alignItems: { xs: "stretch", md: "center" },
+          alignItems: { xs: "stretch", md: "flex-start" },
           gap: 3,
         }}>
-        <Box sx={{ flex: 1, display: "flex", flexDirection: "column", gap: 1 }}>
-          <Typography
-            sx={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: accent,
-              letterSpacing: "0.14em",
-              textTransform: "uppercase",
-            }}>
-            Burn to Mint
-          </Typography>
-          <Typography
-            sx={{
-              fontSize: 22,
-              fontWeight: 700,
-              color: "#FFFFFF",
-              letterSpacing: "-0.01em",
-              lineHeight: 1.3,
-            }}>
-            {mintAmountIon ? `${mintAmountIon} ION per mint` : "Mint price not set"}
-          </Typography>
-          <Typography sx={{ fontSize: 13.5, color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
-            <strong style={{ color: accent }}>{burnPct}%</strong> permanently destroyed ·{" "}
-            <strong style={{ color: "#A78BFA" }}>{creatorPct}%</strong> to creator ·{" "}
-            <strong style={{ color: "rgba(255,255,255,0.85)" }}>{platformPct}%</strong> platform
-          </Typography>
-          {registered && registered !== "loading" && registered !== "not-registered" && (
-            <Typography sx={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)", mt: 0.5 }}>
-              Creator:{" "}
-              <span style={{ fontFamily: "monospace", color: "rgba(255,255,255,0.65)" }}>
-                {shortAddress(registered.creator_address)}
-              </span>
+        <Box sx={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+          <Box>
+            <Typography
+              sx={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: accent,
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+              }}>
+              Burn to Mint
             </Typography>
-          )}
+            <Typography
+              sx={{
+                fontSize: 22,
+                fontWeight: 700,
+                color: "#FFFFFF",
+                letterSpacing: "-0.01em",
+                lineHeight: 1.3,
+                mt: 0.5,
+              }}>
+              {mintAmountIon ? `${mintAmountIon} ION per mint` : "Mint price not set"}
+            </Typography>
+          </Box>
+
+          {/* Explicit destination breakdown */}
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 0.75,
+              p: 1.75,
+              borderRadius: "10px",
+              background: "rgba(255,255,255,0.025)",
+              border: "1px solid rgba(255,255,255,0.06)",
+            }}>
+            <Typography
+              sx={{
+                fontSize: 10.5,
+                fontWeight: 700,
+                color: "rgba(255,255,255,0.45)",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                mb: 0.5,
+              }}>
+              Where your ION goes
+            </Typography>
+            <DestinationRow
+              icon="🔥"
+              label="Burn pocket"
+              sublabel="destroyed forever"
+              amount={`${(mintAmountIon * burnPct) / 100} ION`}
+              address={burnPocketFriendly}
+              accent={accent}
+            />
+            <DestinationRow
+              icon="👤"
+              label="Collection creator"
+              sublabel={null}
+              amount={`${(mintAmountIon * creatorPct) / 100} ION`}
+              address={creatorFriendly}
+              accent="#A78BFA"
+            />
+            <DestinationRow
+              icon="🏛️"
+              label="Platform treasury"
+              sublabel="2% fee"
+              amount={`${(mintAmountIon * platformPct) / 100} ION`}
+              address={treasuryFriendly}
+              accent="rgba(255,255,255,0.6)"
+            />
+          </Box>
         </Box>
 
         <Button
@@ -491,6 +581,98 @@ const ErrorBlock = ({
           {hint}
         </Typography>
       )}
+    </Box>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Normalize a TON address string to friendly UQ form (non-bounceable, mainnet).
+ * Handles raw form ("workchain:hex"), EQ form, UQ form, etc.
+ * If parsing fails, returns the input as-is.
+ */
+function toFriendlyForm(addr: string): string {
+  try {
+    return Address.parse(addr).toFriendly({
+      urlSafe: true,
+      bounceable: false,
+      testOnly: false,
+    });
+  } catch {
+    return addr;
+  }
+}
+
+const DestinationRow = ({
+  icon,
+  label,
+  sublabel,
+  amount,
+  address,
+  accent,
+}: {
+  icon: string;
+  label: string;
+  sublabel: string | null;
+  amount: string;
+  address: string | null;
+  accent: string;
+}) => {
+  const shortAddr = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null;
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 1.5,
+        py: 0.75,
+      }}>
+      <Box sx={{ fontSize: 16, lineHeight: 1, flexShrink: 0, width: 22, textAlign: "center" }}>
+        {icon}
+      </Box>
+      <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <Box sx={{ display: "flex", alignItems: "baseline", gap: 1, flexWrap: "wrap" }}>
+          <Typography
+            sx={{
+              fontSize: 13.5,
+              fontWeight: 600,
+              color: "rgba(255,255,255,0.85)",
+              lineHeight: 1.3,
+            }}>
+            {label}
+          </Typography>
+          {sublabel && (
+            <Typography sx={{ fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.3 }}>
+              {sublabel}
+            </Typography>
+          )}
+        </Box>
+        {shortAddr && (
+          <Typography
+            sx={{
+              fontSize: 10.5,
+              fontFamily: "monospace",
+              color: "rgba(255,255,255,0.45)",
+              lineHeight: 1.5,
+              mt: 0.25,
+            }}>
+            {shortAddr}
+          </Typography>
+        )}
+      </Box>
+      <Typography
+        sx={{
+          fontSize: 14,
+          fontWeight: 700,
+          color: accent,
+          flexShrink: 0,
+          fontVariantNumeric: "tabular-nums",
+        }}>
+        {amount}
+      </Typography>
     </Box>
   );
 };
