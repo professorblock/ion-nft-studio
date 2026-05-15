@@ -234,7 +234,15 @@ export const StepTwo = ({ type, onBack }: Props) => {
               pobMintAmount: toNano(form.pobMintAmountIon),
             }),
       });
-      const commonContentUri = `${ITEMS_BASE}${placeholderAddr.toString()}/`;
+      // common_content is the SAME for all collections — short URL that fits in
+      // a single cell. The per-collection segment is added by the watcher when
+      // it builds each mint's itemContentSuffix as "<collection>/<index>".
+      // This avoids the chicken-and-egg between content cell layout and
+      // computed collection address.
+      const commonContentUri = ITEMS_BASE;
+      // Keep placeholderAddr reference live (unused in final URL but used
+      // during predictCollectionAddress consistency)
+      void placeholderAddr;
 
       // 4. Sign + send the deploy transaction
       setStage({ kind: "awaiting-signature" });
