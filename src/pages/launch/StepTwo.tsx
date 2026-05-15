@@ -23,7 +23,11 @@ import {
 } from "lib/nft/nft-deploy-controller";
 import { uploadFileToIPFS, uploadJsonToIPFS, ipfsToHttp, isPinataConfigured } from "lib/nft/pinata";
 import { deriveBurnPocket } from "lib/nft/burn-pocket";
-import { registerPobCollectionWithWatcher, RegisterResult } from "lib/nft/watcher-registration";
+import {
+  registerPobCollectionWithWatcher,
+  RegisterResult,
+  RegisterPayload,
+} from "lib/nft/watcher-registration";
 import {
   FormShell,
   FormCard,
@@ -67,10 +71,44 @@ type DeployStage =
   | { kind: "awaiting-signature" }
   | { kind: "broadcasting" }
   | { kind: "registering" }
-  | { kind: "success"; address: string; registration: RegisterResult | null }
+  | {
+      kind: "success";
+      address: string;
+      registration: RegisterResult | null;
+      /** Payload used to register — kept around so a manual retry can re-fire it. */
+      registrationPayload: RegisterPayload | null;
+      /** IPFS URI of the collection's metadata. Surfaced so the user can recover
+       *  it from the UI if all auto-retries fail and they want to register
+       *  externally (e.g. via curl). */
+      metadataUri: string | null;
+    }
   | { kind: "error"; message: string };
 
 const ION_EXPLORER_ADDR = (a: string) => `https://explorer.ice.io/address/${a}`;
+
+/**
+ * Retry registration up to 5 times with backoff, but only on transient errors.
+ * Transient = collection contract not yet active on the chain.
+ * Permanent errors (auth, invalid payload) fail fast — no point in retrying.
+ */
+async function registerWithRetry(payload: RegisterPayload): Promise<RegisterResult> {
+  const MAX_ATTEMPTS = 5;
+  const BACKOFF_MS = 8_000;
+
+  let last: RegisterResult | null = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const r = await registerPobCollectionWithWatcher(payload);
+    if (r.ok) return r;
+    last = r;
+    // Only retry on transient "not active yet" type errors.
+    const transient = /not active|not yet|propagat|still confirming/i.test(r.reason);
+    if (!transient) return r;
+    if (attempt < MAX_ATTEMPTS) {
+      await new Promise((res) => setTimeout(res, BACKOFF_MS));
+    }
+  }
+  return last!;
+}
 
 export const StepTwo = ({ type, onBack }: Props) => {
   const walletAddress = useTonAddress();
@@ -266,16 +304,17 @@ export const StepTwo = ({ type, onBack }: Props) => {
       );
 
       setStage({ kind: "broadcasting" });
-      // Wait briefly for ION to confirm the deploy before attempting registration.
-      // Without this delay the watcher's on-chain check would race the deploy tx.
-      await new Promise((r) => setTimeout(r, 8_000));
+      // Initial wait for ION to confirm the deploy before the watcher's
+      // on-chain check can validate the contract.
+      await new Promise((r) => setTimeout(r, 15_000));
 
       // 5. Register with the watcher (PoB only — paid collections don't need it)
       let registration: RegisterResult | null = null;
+      let registrationPayload: RegisterPayload | null = null;
       if (type === "pob") {
         setStage({ kind: "registering" });
         const burnPocket = deriveBurnPocket(result.collectionAddress);
-        registration = await registerPobCollectionWithWatcher({
+        registrationPayload = {
           collection_address: result.collectionAddress.toString(),
           burn_pocket_address: burnPocket.toString(),
           creator_address: creator.toString(),
@@ -283,13 +322,16 @@ export const StepTwo = ({ type, onBack }: Props) => {
           pob_mint_amount_nano: toNano(form.pobMintAmountIon).toString(),
           max_supply: form.maxSupply.trim() ? Number(form.maxSupply) : null,
           metadata_uri: metadataUri,
-        });
+        };
+        registration = await registerWithRetry(registrationPayload);
       }
 
       setStage({
         kind: "success",
         address: result.collectionAddress.toString(),
         registration,
+        registrationPayload,
+        metadataUri,
       });
     } catch (err: any) {
       setStage({
@@ -430,7 +472,7 @@ export const StepTwo = ({ type, onBack }: Props) => {
                   )}
                 </Box>
               ) : (
-                <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
                   <Typography
                     sx={{
                       fontSize: 12,
@@ -460,6 +502,59 @@ export const StepTwo = ({ type, onBack }: Props) => {
                     }}>
                     {stage.registration.reason}
                   </Box>
+
+                  {/* Retry button — calls the same registration endpoint with the
+                      payload we kept around. Common cause of failure is just timing;
+                      a retry usually succeeds within 30–60 sec of the deploy. */}
+                  {stage.registrationPayload && (
+                    <Button
+                      variant="outlined"
+                      onClick={async () => {
+                        if (!stage.registrationPayload) return;
+                        // Optimistically show "registering" state, then re-set on result.
+                        const result = await registerWithRetry(stage.registrationPayload);
+                        setStage({ ...stage, registration: result });
+                      }}
+                      sx={{
+                        alignSelf: "flex-start",
+                        textTransform: "none",
+                        fontWeight: 600,
+                        fontSize: 13,
+                        borderColor: "rgba(251,191,36,0.5)",
+                        color: "#FCD34D",
+                        "&:hover": {
+                          borderColor: "#FBBF24",
+                          background: "rgba(251,191,36,0.05)",
+                        },
+                      }}>
+                      Retry registration
+                    </Button>
+                  )}
+
+                  {/* Show metadata URI so user has recovery option if all retries
+                      fail and they want to register manually via curl. Without this
+                      escape hatch, the URI is unrecoverable from the UI after refresh. */}
+                  {stage.metadataUri && (
+                    <Box sx={{ mt: 1.5, pt: 1.5, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                      <Typography sx={{ fontSize: 11, color: "rgba(255,255,255,0.45)", mb: 0.5 }}>
+                        Save this in case you need to register manually:
+                      </Typography>
+                      <Box
+                        sx={{
+                          fontSize: 11,
+                          fontFamily: "monospace",
+                          color: "rgba(255,255,255,0.7)",
+                          background: "rgba(255,255,255,0.03)",
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          borderRadius: "6px",
+                          padding: "6px 10px",
+                          wordBreak: "break-all",
+                          userSelect: "all",
+                        }}>
+                        metadata_uri = {stage.metadataUri}
+                      </Box>
+                    </Box>
+                  )}
                 </Box>
               )}
             </FormCard>
