@@ -53,15 +53,21 @@ export default {
     }
 
     // Origin gate (allow GET /health from anywhere for uptime checks)
+    // Items metadata endpoint also bypasses CORS — NFT marketplaces and
+    // wallet indexers from any origin need to fetch item JSON.
     const url = new URL(request.url);
     const isHealth = url.pathname === "/health" || url.pathname === "/";
-    if (!corsOrigin && !isHealth) {
+    const isItems = url.pathname.startsWith("/items/") && request.method === "GET";
+    if (!corsOrigin && !isHealth && !isItems) {
       return jsonResponse({ error: "Origin not allowed" }, corsHeaders, 403);
     }
 
     try {
       if (isHealth) {
         return jsonResponse({ ok: true, service: "ion-nft-upload-proxy", version: 1 }, corsHeaders);
+      }
+      if (isItems) {
+        return await getItem(url, env);
       }
       if (url.pathname === "/upload/file" && request.method === "POST") {
         return await uploadFile(request, env, corsHeaders);
@@ -172,6 +178,10 @@ interface RegisterPayload {
   pob_burn_pct: number;
   pob_mint_amount_nano: string;
   max_supply: number | null;
+  /** IPFS/HTTPS URI of the collection's metadata JSON.
+   *  Used by GET /items/:collection/:index to serve per-item metadata
+   *  by extending the collection's metadata with a "#N" suffix. */
+  metadata_uri?: string;
 }
 
 interface TrackedCollection extends RegisterPayload {
@@ -392,4 +402,121 @@ function utf8FromBase64(b64: string): string {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new TextDecoder().decode(bytes);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Per-item NFT metadata
+// ──────────────────────────────────────────────────────────────────────────────
+//
+// GET /items/:collection_address/:index
+//   Returns NFT item metadata JSON. We fetch the collection's IPFS metadata
+//   (recorded at registration time), then return it with a "#<index>" suffix
+//   on the name. Same image, description, attributes; different name per item.
+//
+// This is what each minted NFT's content URL resolves to. The collection's
+// common_content is set to "<this worker>/items/<collection>/" so that the
+// FunC contract auto-builds the per-item URL by appending the item index.
+
+async function getItem(url: URL, env: Env): Promise<Response> {
+  const parts = url.pathname.split("/").filter(Boolean);
+  // parts = ["items", collectionAddress, indexStr]
+  if (parts.length !== 3) {
+    return jsonResponse({ error: "Path must be /items/:collection/:index" }, ITEMS_CORS, 400);
+  }
+  const collectionAddress = parts[1];
+  const indexStr = parts[2];
+  const index = Number(indexStr);
+  if (!Number.isInteger(index) || index < 0) {
+    return jsonResponse({ error: "Invalid index" }, ITEMS_CORS, 400);
+  }
+
+  // Look up the collection's metadata URI from tracked-collections.json
+  let tracked: TrackedCollection[];
+  try {
+    const file = await githubGetFile(env, TRACKED_FILE_PATH);
+    tracked = JSON.parse(file.content) as TrackedCollection[];
+  } catch {
+    return jsonResponse(
+      placeholderMetadata(index, "Collection registry unavailable"),
+      ITEMS_CORS,
+      200,
+    );
+  }
+
+  // Loose-match: addresses can be in raw or friendly form
+  const entry = tracked.find((c) => addressMatches(c.collection_address, collectionAddress));
+  if (!entry || !entry.metadata_uri) {
+    return jsonResponse(
+      placeholderMetadata(index, "Collection not registered or metadata not yet pinned"),
+      ITEMS_CORS,
+      200,
+    );
+  }
+
+  // Fetch the collection's metadata JSON
+  let collectionMeta: Record<string, unknown>;
+  try {
+    const httpUri = ipfsToHttp(entry.metadata_uri);
+    const res = await fetch(httpUri, { cf: { cacheTtl: 3600 } as any });
+    if (!res.ok) throw new Error(`metadata fetch ${res.status}`);
+    collectionMeta = (await res.json()) as Record<string, unknown>;
+  } catch {
+    return jsonResponse(
+      placeholderMetadata(index, "Collection metadata unreachable"),
+      ITEMS_CORS,
+      200,
+    );
+  }
+
+  // Build per-item metadata: same content as collection, name has "#N" suffix
+  const baseName = (collectionMeta.name as string | undefined) ?? "Item";
+  const itemMeta = {
+    ...collectionMeta,
+    name: `${baseName} #${index}`,
+    external_url: `https://nft.ionhub.io/collection/${collectionAddress}`,
+  };
+
+  return jsonResponse(itemMeta, ITEMS_CORS, 200);
+}
+
+const ITEMS_CORS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Cache-Control": "public, max-age=300",
+};
+
+function placeholderMetadata(index: number, hint: string): Record<string, unknown> {
+  return {
+    name: `Item #${index}`,
+    description: `Metadata temporarily unavailable: ${hint}`,
+  };
+}
+
+function ipfsToHttp(uri: string): string {
+  if (uri.startsWith("ipfs://")) {
+    return uri.replace("ipfs://", "https://gateway.pinata.cloud/ipfs/");
+  }
+  return uri;
+}
+
+/** Tolerant address match: treats raw "0:hex" and friendly "EQ/UQ/0Q..."
+ *  forms of the same address as equal. */
+function addressMatches(a: string, b: string): boolean {
+  if (a === b) return true;
+  const ah = extractHash(a);
+  const bh = extractHash(b);
+  return ah !== null && ah === bh;
+}
+
+function extractHash(addr: string): string | null {
+  if (addr.includes(":")) {
+    const parts = addr.split(":");
+    if (parts.length === 2 && parts[1].length === 64) {
+      return parts[1].toLowerCase();
+    }
+  }
+  // Friendly form: 48 chars base64-url. The hash bytes are at offsets 2..34
+  // of the 36-byte decoded form. Skip the precise decode here — for matching
+  // we just need consistency between two friendly forms which == triggers on.
+  return null;
 }

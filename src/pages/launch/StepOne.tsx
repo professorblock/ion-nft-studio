@@ -33,10 +33,10 @@ const TypeCard = ({
       background: "rgba(255,255,255,0.025)",
       border: "1px solid rgba(255,255,255,0.10)",
       borderRadius: "16px",
-      padding: "24px",
+      padding: { xs: "16px", md: "24px" },
       display: "flex",
       flexDirection: "column",
-      gap: 16,
+      gap: { xs: 1.5, md: 2 },
       transition: "border-color 200ms ease, transform 200ms ease, background 200ms ease",
       "&:hover": {
         borderColor: accent,
@@ -48,11 +48,11 @@ const TypeCard = ({
         outlineOffset: 2,
       },
     }}>
-    <Box sx={{ display: "flex", alignItems: "center", gap: 12 }}>
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
       <Box
         sx={{
-          width: 44,
-          height: 44,
+          width: { xs: 40, md: 44 },
+          height: { xs: 40, md: 44 },
           borderRadius: "12px",
           background: `${accent}1A`, // ~10% alpha
           color: accent,
@@ -65,28 +65,42 @@ const TypeCard = ({
       </Box>
       <Box sx={{ minWidth: 0, flex: 1 }}>
         <Typography
-          sx={{ fontSize: 18, fontWeight: 700, color: "#FFFFFF", letterSpacing: "-0.01em" }}>
+          sx={{
+            fontSize: { xs: 16, md: 18 },
+            fontWeight: 700,
+            color: "#FFFFFF",
+            letterSpacing: "-0.01em",
+            lineHeight: 1.3,
+          }}>
           {title}
         </Typography>
-        <Typography sx={{ fontSize: 13, color: "rgba(255,255,255,0.55)", mt: 0.25 }}>
+        <Typography
+          sx={{
+            fontSize: { xs: 12, md: 13 },
+            color: "rgba(255,255,255,0.55)",
+            mt: 0.25,
+            lineHeight: 1.4,
+          }}>
           {subtitle}
         </Typography>
       </Box>
-      <ArrowForwardRoundedIcon sx={{ color: "rgba(255,255,255,0.35)", fontSize: 20 }} />
+      <ArrowForwardRoundedIcon
+        sx={{ color: "rgba(255,255,255,0.35)", fontSize: 20, flexShrink: 0 }}
+      />
     </Box>
 
     <Box
       component="ul"
-      sx={{ m: 0, p: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
+      sx={{ m: 0, p: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 0.75 }}>
       {bullets.map((b, i) => (
         <Box
           component="li"
           key={i}
           sx={{
-            fontSize: 13.5,
+            fontSize: { xs: 12.5, md: 13.5 },
             color: "rgba(255,255,255,0.72)",
             display: "flex",
-            gap: 8,
+            gap: 1,
             lineHeight: 1.55,
             "&::before": {
               content: '""',

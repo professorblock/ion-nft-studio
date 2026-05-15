@@ -11,6 +11,7 @@ import { Outlet, useNavigate } from "react-router-dom";
 import { HeaderContent, HeaderWrapper } from "./styled";
 import { TonConnectButton, useTonAddress, useTonConnectUI } from "@ion-gateway/ui-react";
 import ionLogo from "assets/ion-logo.png";
+import { normalizeWallet } from "lib/nft/address-format";
 
 const navItems = [
   { label: "Ecosystem", href: "https://ice.io" },
@@ -347,12 +348,13 @@ const ConnectWalletButton = ({
 
   const handleCopy = async () => {
     if (!address) return;
+    const toCopy = normalizeWallet(address);
     try {
-      await navigator.clipboard.writeText(address);
+      await navigator.clipboard.writeText(toCopy);
     } catch {
       // older-browser fallback
       const ta = document.createElement("textarea");
-      ta.value = address;
+      ta.value = toCopy;
       ta.style.position = "fixed";
       ta.style.opacity = "0";
       document.body.appendChild(ta);
@@ -375,7 +377,13 @@ const ConnectWalletButton = ({
     }
   };
 
-  const truncate = (addr: string) => `${addr.slice(0, 4)}...${addr.slice(-4)}`;
+  const truncate = (addr: string) => {
+    // Normalize to friendly UQ form first — wallets sometimes return the
+    // testnet-flagged 0Q... form for the same mainnet wallet, which is
+    // confusing for users who see UQ... in Tonkeeper.
+    const friendly = normalizeWallet(addr);
+    return `${friendly.slice(0, 4)}...${friendly.slice(-4)}`;
+  };
 
   return (
     <>

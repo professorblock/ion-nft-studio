@@ -31,6 +31,7 @@ import {
   RegisteredCollectionInfo,
 } from "lib/nft/watcher-status";
 import { shortAddress } from "lib/nft/address-format";
+import { AddressDisplay } from "components/AddressDisplay";
 
 const POLL_INTERVAL_MS = 30_000;
 const POLL_TIMEOUT_MS = 10 * 60_000;
@@ -642,7 +643,6 @@ const DestinationRow = ({
   address: string | null;
   accent: string;
 }) => {
-  const shortAddr = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null;
   return (
     <Box
       sx={{
@@ -671,17 +671,10 @@ const DestinationRow = ({
             </Typography>
           )}
         </Box>
-        {shortAddr && (
-          <Typography
-            sx={{
-              fontSize: 10.5,
-              fontFamily: "monospace",
-              color: "rgba(255,255,255,0.45)",
-              lineHeight: 1.5,
-              mt: 0.25,
-            }}>
-            {shortAddr}
-          </Typography>
+        {address && (
+          <Box sx={{ mt: 0.25 }}>
+            <AddressDisplay address={address} variant="wallet" />
+          </Box>
         )}
       </Box>
       <Typography

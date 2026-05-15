@@ -218,11 +218,12 @@ export const StepTwo = ({ type, onBack }: Props) => {
       // If the env var isn't set yet, fall back to creator (legacy dev path).
       const ownerForDeploy =
         type === "pob" && PLATFORM_MINT_KEY_ADDRESS ? PLATFORM_MINT_KEY_ADDRESS : creator;
+      const ITEMS_BASE = "https://ion-nft-upload-proxy.iceopennetwork.workers.dev/items/";
       const placeholderAddr = predictCollectionAddress({
         creatorAddress: creator,
         type,
         collectionContentUri: metadataUri,
-        commonContentUri: "https://nft.ionhub.io/items/",
+        commonContentUri: ITEMS_BASE,
         royaltyFactor: Math.round(form.royaltyPct * 10),
         royaltyBase: 1000,
         platformMintKeyAddress: ownerForDeploy,
@@ -233,7 +234,7 @@ export const StepTwo = ({ type, onBack }: Props) => {
               pobMintAmount: toNano(form.pobMintAmountIon),
             }),
       });
-      const commonContentUri = `https://nft.ionhub.io/items/${placeholderAddr.toString()}/`;
+      const commonContentUri = `${ITEMS_BASE}${placeholderAddr.toString()}/`;
 
       // 4. Sign + send the deploy transaction
       setStage({ kind: "awaiting-signature" });
@@ -273,6 +274,7 @@ export const StepTwo = ({ type, onBack }: Props) => {
           pob_burn_pct: form.pobBurnPct,
           pob_mint_amount_nano: toNano(form.pobMintAmountIon).toString(),
           max_supply: form.maxSupply.trim() ? Number(form.maxSupply) : null,
+          metadata_uri: metadataUri,
         });
       }
 

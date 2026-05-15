@@ -19,6 +19,8 @@ export interface RegisterPayload {
   pob_burn_pct: number;
   pob_mint_amount_nano: string;
   max_supply: number | null;
+  /** IPFS URI of the collection's metadata JSON (for the items endpoint). */
+  metadata_uri?: string;
 }
 
 export type RegisterResult =
