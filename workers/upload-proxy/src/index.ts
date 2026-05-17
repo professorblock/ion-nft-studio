@@ -453,16 +453,38 @@ async function getItem(url: URL, env: Env): Promise<Response> {
     );
   }
 
-  // Fetch the collection's metadata JSON
-  let collectionMeta: Record<string, unknown>;
-  try {
-    const httpUri = ipfsToHttp(entry.metadata_uri);
-    const res = await fetch(httpUri, { cf: { cacheTtl: 3600 } as any });
-    if (!res.ok) throw new Error(`metadata fetch ${res.status}`);
-    collectionMeta = (await res.json()) as Record<string, unknown>;
-  } catch {
+  // Fetch the collection's metadata JSON. We try multiple IPFS gateways
+  // in order because some reject Cloudflare Worker traffic, some are slow,
+  // and we want resilience to any one gateway being down.
+  let collectionMeta: Record<string, unknown> | null = null;
+  let lastError: string = "no gateways tried";
+
+  const candidateUris = buildGatewayCandidates(entry.metadata_uri);
+  for (const tryUri of candidateUris) {
+    try {
+      const res = await fetch(tryUri, {
+        headers: {
+          // Pinata and some other gateways reject requests with no UA or
+          // with a UA that looks like a generic bot. A real-looking UA helps.
+          "User-Agent": "Mozilla/5.0 (compatible; IONHubBot/1.0; +https://nft.ionhub.io)",
+          Accept: "application/json",
+        },
+      });
+      if (!res.ok) {
+        lastError = `${tryUri.split("/").slice(0, 3).join("/")} → HTTP ${res.status}`;
+        continue;
+      }
+      collectionMeta = (await res.json()) as Record<string, unknown>;
+      break;
+    } catch (e: any) {
+      lastError = `${tryUri.split("/").slice(0, 3).join("/")} → ${e?.message ?? e}`;
+      continue;
+    }
+  }
+
+  if (!collectionMeta) {
     return jsonResponse(
-      placeholderMetadata(index, "Collection metadata unreachable"),
+      placeholderMetadata(index, `metadata fetch failed: ${lastError}`),
       ITEMS_CORS,
       200,
     );
@@ -499,6 +521,37 @@ function ipfsToHttp(uri: string): string {
   return uri;
 }
 
+/**
+ * Build an ordered list of HTTP URLs to try for a given metadata URI.
+ * If the URI is `ipfs://CID`, we try several public gateways.
+ * If it's already an HTTPS URL with a /ipfs/<CID> path, we also derive
+ * alternate gateway URLs from the CID so a flaky gateway can fall back.
+ */
+function buildGatewayCandidates(uri: string): string[] {
+  const GATEWAYS = [
+    "https://gateway.pinata.cloud/ipfs/",
+    "https://ipfs.io/ipfs/",
+    "https://cloudflare-ipfs.com/ipfs/",
+    "https://dweb.link/ipfs/",
+  ];
+
+  // Extract CID if it's an IPFS URL of any common format
+  let cid: string | null = null;
+  if (uri.startsWith("ipfs://")) {
+    cid = uri.slice("ipfs://".length).split("/")[0];
+  } else {
+    const m = uri.match(/\/ipfs\/([A-Za-z0-9]+)/);
+    if (m) cid = m[1];
+  }
+
+  if (cid) {
+    return GATEWAYS.map((g) => `${g}${cid}`);
+  }
+
+  // Not a recognizable IPFS URL — just try it as-is
+  return [uri];
+}
+
 /** Tolerant address match: treats raw "0:hex" and friendly "EQ/UQ/0Q..."
  *  forms of the same address as equal. */
 function addressMatches(a: string, b: string): boolean {
@@ -509,14 +562,31 @@ function addressMatches(a: string, b: string): boolean {
 }
 
 function extractHash(addr: string): string | null {
+  // Raw form: "workchain:hex_hash" — hash is the part after the colon
   if (addr.includes(":")) {
     const parts = addr.split(":");
     if (parts.length === 2 && parts[1].length === 64) {
       return parts[1].toLowerCase();
     }
+    return null;
   }
-  // Friendly form: 48 chars base64-url. The hash bytes are at offsets 2..34
-  // of the 36-byte decoded form. Skip the precise decode here — for matching
-  // we just need consistency between two friendly forms which == triggers on.
+  // Friendly form: 48 chars base64-url. Decoded structure:
+  //   [flags(1)] [workchain(1)] [hash(32)] [crc(2)] = 36 bytes total
+  if (addr.length === 48) {
+    try {
+      // Convert base64-url to standard base64 for atob
+      const b64 = addr.replace(/-/g, "+").replace(/_/g, "/");
+      const bin = atob(b64);
+      if (bin.length !== 36) return null;
+      // Extract 32 hash bytes starting at offset 2
+      let hex = "";
+      for (let i = 2; i < 34; i++) {
+        hex += bin.charCodeAt(i).toString(16).padStart(2, "0");
+      }
+      return hex.toLowerCase();
+    } catch {
+      return null;
+    }
+  }
   return null;
 }
